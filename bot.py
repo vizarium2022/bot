@@ -3,7 +3,7 @@ import os
 from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, FSInputFile
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -64,7 +64,6 @@ async def check_channels_status():
             await bot.send_message(ADMIN_ID, f"⚠️ КАНАЛ {name} (ID: {cid}) НЕДОСТУПЕН!")
     return status
 
-# ========== КЛАВИАТУРА С КНОПКАМИ ==========
 def get_main_keyboard():
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
@@ -87,7 +86,6 @@ async def start(message: types.Message):
         reply_markup=get_main_keyboard()
     )
 
-# ========== ОБРАБОТКА КНОПОК ==========
 @dp.message(lambda msg: msg.text == "📁 Получить ссылку на каналы")
 async def get_channels_button(message: types.Message, state: FSMContext):
     await message.answer("🔐 Введите пароль для доступа к каналам:")
@@ -121,8 +119,7 @@ async def help_button(message: types.Message):
     )
     await message.answer(help_text, parse_mode="Markdown")
 
-# ========== ОБРАБОТКА ПАРОЛЯ ==========
-@dp.message(lambda msg: msg.text and msg.text != "📁 Получить ссылку на каналы" and msg.text != "📊 Статус каналов" and msg.text != "📤 Загрузить файл" and msg.text != "ℹ️ Помощь")
+@dp.message(lambda msg: msg.text and msg.text not in ["📁 Получить ссылку на каналы", "📊 Статус каналов", "📤 Загрузить файл", "ℹ️ Помощь"])
 async def check_password(message: types.Message, state: FSMContext):
     current_state = await state.get_state()
     if current_state != "waiting_password":
@@ -149,7 +146,6 @@ async def check_password(message: types.Message, state: FSMContext):
         await message.answer("❌ Неверный пароль! Попробуй ещё раз.")
         await state.clear()
 
-# ========== ЗАГРУЗКА ФАЙЛОВ ==========
 @dp.message(FileUploadState.waiting_for_file)
 async def process_file(message: types.Message, state: FSMContext):
     if not is_admin(message.from_user.id):
@@ -179,7 +175,7 @@ async def process_file(message: types.Message, state: FSMContext):
         filename = f"voice_{file.file_id}.ogg"
         file_type = "voice"
     else:
-        await message.answer("❌ Неподдерживаемый тип файла. Отправь видео, фото, документ, аудио или голосовое.")
+        await message.answer("❌ Неподдерживаемый тип файла")
         await state.clear()
         return
 
@@ -192,19 +188,18 @@ async def process_file(message: types.Message, state: FSMContext):
 
     ch = get_next_channel()
     try:
-        with open(path, 'rb') as f:
-            if file_type == "document":
-                await bot.send_document(ch, f, caption=fname)
-            elif file_type == "video":
-                await bot.send_video(ch, f, caption=fname)
-            elif file_type == "photo":
-                await bot.send_photo(ch, f, caption=fname)
-            elif file_type == "audio":
-                await bot.send_audio(ch, f, caption=fname)
-            elif file_type == "voice":
-                await bot.send_voice(ch, f, caption=fname)
-            else:
-                await bot.send_document(ch, f, caption=fname)
+        if file_type == "document":
+            await bot.send_document(ch, FSInputFile(path), caption=fname)
+        elif file_type == "video":
+            await bot.send_video(ch, FSInputFile(path), caption=fname)
+        elif file_type == "photo":
+            await bot.send_photo(ch, FSInputFile(path), caption=fname)
+        elif file_type == "audio":
+            await bot.send_audio(ch, FSInputFile(path), caption=fname)
+        elif file_type == "voice":
+            await bot.send_voice(ch, FSInputFile(path), caption=fname)
+        else:
+            await bot.send_document(ch, FSInputFile(path), caption=fname)
         os.remove(path)
         await message.answer(f"✅ Файл «{fname}» успешно загружен в канал {ch}!")
     except Exception as e:
@@ -212,15 +207,6 @@ async def process_file(message: types.Message, state: FSMContext):
         if os.path.exists(path):
             os.remove(path)
     await state.clear()
-
-# ========== СТАРЫЕ КОМАНДЫ (для совместимости) ==========
-@dp.message(Command("upload"))
-async def cmd_upload(message: types.Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
-        await message.answer("⛔ Только администратор.")
-        return
-    await message.answer("📤 Отправьте файл (любой формат). Я сам разберусь, что это.")
-    await state.set_state(FileUploadState.waiting_for_file)
 
 @dp.message(Command("status"))
 async def cmd_status(message: types.Message):
