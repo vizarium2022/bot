@@ -57,13 +57,21 @@ async def check_channels_status():
     return status
 
 def get_main_keyboard():
+    """Клавиатура 2 ряда по 3 кнопки"""
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📁 Получить ссылку на каналы")],
-            [KeyboardButton(text="📊 Статус каналов")],
-            [KeyboardButton(text="📤 Загрузить файл")],
-            [KeyboardButton(text="📝 Отправить текст")],
-            [KeyboardButton(text="ℹ️ Помощь")]
+            [
+                KeyboardButton(text="📁 Получить ссылку на каналы"),
+                KeyboardButton(text="📊 Статус каналов")
+            ],
+            [
+                KeyboardButton(text="📤 Загрузить файл"),
+                KeyboardButton(text="📥 Выгрузить файлы")
+            ],
+            [
+                KeyboardButton(text="📝 Отправить текст"),
+                KeyboardButton(text="ℹ️ Помощь")
+            ]
         ],
         resize_keyboard=True
     )
@@ -124,6 +132,53 @@ async def upload_button(message: types.Message, state: FSMContext):
     await message.answer("📤 Отправьте файл (любой формат). Он отправится во все 3 канала.\n⚠️ Файл НЕ сохраняется на диск хостинга.")
     await state.set_state(FileUploadState.waiting_for_file)
 
+@dp.message(lambda msg: msg.text == "📥 Выгрузить файлы")
+async def unload_files_button(message: types.Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только администратор может выгружать файлы.")
+        return
+    
+    # Создаём кнопки выбора канала
+    kb = InlineKeyboardMarkup(inline_keyboard=[])
+    for name, cid in CHANNELS.items():
+        kb.inline_keyboard.append([
+            InlineKeyboardButton(text=f"📂 Канал {name}", callback_data=f"unload_channel_{name}")
+        ])
+    await message.answer(
+        "📥 *Выгрузка файлов из каналов*\n\n"
+        "⚠️ Telegram Bot API не позволяет боту просматривать историю каналов.\n\n"
+        "📌 *Как выгрузить файл:*\n"
+        "1. Зайди в нужный канал через кнопку «Получить ссылку на каналы»\n"
+        "2. Перешли нужный файл из канала в этого бота\n"
+        "3. Бот перешлёт его тебе обратно\n\n"
+        "Либо выбери канал для инструкции:",
+        reply_markup=kb,
+        parse_mode="Markdown"
+    )
+
+@dp.callback_query(lambda c: c.data and c.data.startswith("unload_channel_"))
+async def unload_channel_selected(callback: types.CallbackQuery):
+    await callback.answer()
+    channel_num = callback.data.split("_")[-1]
+    channel_name = channel_num
+    channel_id = CHANNELS.get(channel_num)
+    
+    if not channel_id:
+        await callback.message.answer("❌ Канал не найден")
+        return
+    
+    await callback.message.answer(
+        f"📂 *Канал {channel_name}*\n\n"
+        f"⚠️ Telegram Bot API не даёт полный доступ к истории канала.\n\n"
+        f"📌 *Как выгрузить файл:*\n"
+        f"1. Зайди в канал {channel_name} по ссылке (через главное меню)\n"
+        f"2. Найди нужный файл\n"
+        f"3. Перешли его в этот чат\n"
+        f"4. Я перешлю его тебе\n\n"
+        f"💡 *Совет:* Чтобы файлы не терялись, сохраняй их file_id в базе данных.",
+        parse_mode="Markdown"
+    )
+
 @dp.message(lambda msg: msg.text == "📝 Отправить текст")
 async def send_text_button(message: types.Message, state: FSMContext):
     if not is_admin(message.from_user.id):
@@ -141,14 +196,15 @@ async def help_button(message: types.Message):
         "   — если доступ истёк (24 часа), введи пароль\n"
         "2. Нажми на ссылку — попадёшь в канал с файлами и сообщениями\n"
         "3. Администратор загружает файлы через кнопку «Загрузить файл»\n"
-        "4. Администратор отправляет текст через кнопку «Отправить текст»\n\n"
+        "4. Администратор отправляет текст через кнопку «Отправить текст»\n"
+        "5. Администратор может выгружать файлы через кнопку «Выгрузить файлы»\n\n"
         "📌 Ссылки на каналы действуют 5 минут.\n"
         "📌 Доступ к каналам действует 24 часа после ввода пароля.\n"
         "📌 Бот НЕ использует дисковое пространство хостинга."
     )
     await message.answer(help_text, parse_mode="Markdown")
 
-@dp.message(lambda msg: msg.text and msg.text not in ["📁 Получить ссылку на каналы", "📊 Статус каналов", "📤 Загрузить файл", "📝 Отправить текст", "ℹ️ Помощь"])
+@dp.message(lambda msg: msg.text and msg.text not in ["📁 Получить ссылку на каналы", "📊 Статус каналов", "📤 Загрузить файл", "📥 Выгрузить файлы", "📝 Отправить текст", "ℹ️ Помощь"])
 async def handle_messages(message: types.Message, state: FSMContext):
     current_state = await state.get_state()
     
