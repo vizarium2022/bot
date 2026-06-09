@@ -75,13 +75,13 @@ async def start(message: types.Message):
         "🤖 SYMBIOTE TRADING БОТ\n\n"
         "Я храню файлы в 3 каналах и выдаю их по паролю.\n\n"
         "📌 Используй кнопки внизу для управления.\n"
-        "🔐 Пароль для доступа к каналам: 20032009sdr",
+        "🔐 Пароль для доступа знает администратор.",
         reply_markup=get_main_keyboard()
     )
 
 @dp.message(lambda msg: msg.text == "📁 Получить ссылку на каналы")
 async def get_channels_button(message: types.Message, state: FSMContext):
-    await message.answer("🔐 Введите пароль для доступа к каналам:")
+    await message.answer("🔐 Введите пароль:")
     await state.set_state("waiting_password")
 
 @dp.message(lambda msg: msg.text == "📊 Статус каналов")
@@ -117,7 +117,7 @@ async def unload_files_menu(message: types.Message):
 async def help_button(message: types.Message):
     help_text = (
         "📖 *Помощь по боту*\n\n"
-        "1. Нажми кнопку «Получить ссылку на каналы» и введи пароль: `20032009sdr`\n"
+        "1. Нажми кнопку «Получить ссылку на каналы» и введи пароль (знает администратор)\n"
         "2. Нажми на ссылку — попадёшь в канал с файлами\n"
         "3. Администратор может загружать файлы через кнопку «Загрузить файл»\n"
         "4. Администратор может выгружать файлы через кнопку «Выгрузить файлы»\n\n"
@@ -130,7 +130,7 @@ async def help_button(message: types.Message):
 async def check_password(message: types.Message, state: FSMContext):
     current_state = await state.get_state()
     if current_state != "waiting_password":
-        await message.answer("Используй кнопки меню. Если хочешь получить доступ к каналам — нажми «Получить ссылку на каналы».")
+        await message.answer("Используй кнопки меню.")
         return
     if message.text == GLOBAL_PASSWORD:
         temp_links[message.from_user.id] = {"expires": datetime.now() + timedelta(minutes=5)}
@@ -150,125 +150,22 @@ async def check_password(message: types.Message, state: FSMContext):
         await message.answer("✅ Доступ разрешён! Ссылки на 5 минут:", reply_markup=kb)
         await state.clear()
     else:
-        await message.answer("❌ Неверный пароль! Попробуй ещё раз.")
+        await message.answer("❌ Неверный пароль!")
         await state.clear()
 
 @dp.callback_query(lambda c: c.data and c.data.startswith("unload_channel_"))
 async def show_channel_files(callback: types.CallbackQuery):
     await callback.answer()
     channel_num = callback.data.split("_")[-1]
-    channel_id = CHANNELS.get(channel_num)
     
-    if not channel_id:
-        await callback.message.answer("❌ Канал не найден")
-        return
-    
-    await callback.message.answer(f"🔍 Запрашиваю список файлов из канала {channel_num}...")
-    
-    try:
-        messages = []
-        async for message in bot.get_chat_history(channel_id, limit=50):
-            if message.document or message.video or message.photo or message.audio or message.voice:
-                if message.document:
-                    file_name = message.document.file_name
-                    file_id = message.document.file_id
-                elif message.video:
-                    file_name = f"video_{message.video.file_id}.mp4"
-                    file_id = message.video.file_id
-                elif message.photo:
-                    file_name = f"photo_{message.photo[-1].file_id}.jpg"
-                    file_id = message.photo[-1].file_id
-                elif message.audio:
-                    file_name = message.audio.file_name or f"audio_{message.audio.file_id}.mp3"
-                    file_id = message.audio.file_id
-                elif message.voice:
-                    file_name = f"voice_{message.voice.file_id}.ogg"
-                    file_id = message.voice.file_id
-                else:
-                    continue
-                messages.append((file_name, file_id))
-        
-        if not messages:
-            await callback.message.answer("📂 В этом канале пока нет файлов.")
-            return
-        
-        page = 0
-        per_page = 5
-        total_pages = (len(messages) + per_page - 1) // per_page
-        
-        kb = InlineKeyboardMarkup(inline_keyboard=[])
-        for i in range(page * per_page, min((page + 1) * per_page, len(messages))):
-            name, fid = messages[i]
-            display_name = name[:30] + "..." if len(name) > 30 else name
-            kb.inline_keyboard.append([
-                InlineKeyboardButton(text=f"📄 {display_name}", callback_data=f"download_file_{fid}")
-            ])
-        
-        nav_buttons = []
-        if total_pages > 1:
-            if page > 0:
-                nav_buttons.append(InlineKeyboardButton(text="◀️ Назад", callback_data=f"files_page_{channel_num}_{page-1}"))
-            if page < total_pages - 1:
-                nav_buttons.append(InlineKeyboardButton(text="Вперёд ▶️", callback_data=f"files_page_{channel_num}_{page+1}"))
-        if nav_buttons:
-            kb.inline_keyboard.append(nav_buttons)
-        
-        temp_links[f"files_{callback.from_user.id}"] = {
-            "messages": messages,
-            "channel": channel_num
-        }
-        
-        await callback.message.edit_text(f"📁 *Канал {channel_num}* — выбери файл для скачивания (страница {page+1}/{total_pages}):", 
-                                      reply_markup=kb, parse_mode="Markdown")
-    except Exception as e:
-        await callback.message.answer(f"❌ Ошибка при получении файлов: {e}")
-
-@dp.callback_query(lambda c: c.data and c.data.startswith("files_page_"))
-async def files_page(callback: types.CallbackQuery):
-    await callback.answer()
-    parts = callback.data.split("_")
-    channel_num = parts[2]
-    page = int(parts[3])
-    
-    temp_data = temp_links.get(f"files_{callback.from_user.id}")
-    if not temp_data:
-        await callback.message.answer("❌ Данные устарели. Нажми «Выгрузить файлы» заново.")
-        return
-    
-    messages = temp_data["messages"]
-    per_page = 5
-    total_pages = (len(messages) + per_page - 1) // per_page
-    
-    kb = InlineKeyboardMarkup(inline_keyboard=[])
-    for i in range(page * per_page, min((page + 1) * per_page, len(messages))):
-        name, fid = messages[i]
-        display_name = name[:30] + "..." if len(name) > 30 else name
-        kb.inline_keyboard.append([
-            InlineKeyboardButton(text=f"📄 {display_name}", callback_data=f"download_file_{fid}")
-        ])
-    
-    nav_buttons = []
-    if page > 0:
-        nav_buttons.append(InlineKeyboardButton(text="◀️ Назад", callback_data=f"files_page_{channel_num}_{page-1}"))
-    if page < total_pages - 1:
-        nav_buttons.append(InlineKeyboardButton(text="Вперёд ▶️", callback_data=f"files_page_{channel_num}_{page+1}"))
-    if nav_buttons:
-        kb.inline_keyboard.append(nav_buttons)
-    
-    await callback.message.edit_text(f"📁 *Канал {channel_num}* — выбери файл для скачивания (страница {page+1}/{total_pages}):", 
-                                     reply_markup=kb, parse_mode="Markdown")
-
-@dp.callback_query(lambda c: c.data and c.data.startswith("download_file_"))
-async def download_file(callback: types.CallbackQuery):
-    await callback.answer()
-    file_id = callback.data.replace("download_file_", "")
-    
-    await callback.message.answer("⏳ Скачиваю файл...")
-    
-    try:
-        await callback.message.answer_document(file_id, caption="✅ Файл скачан")
-    except Exception as e:
-        await callback.message.answer(f"❌ Ошибка при скачивании: {e}")
+    await callback.message.answer(
+        "⚠️ *Временно*: Telegram Bot API не позволяет боту просматривать историю канала.\n\n"
+        "📌 Чтобы выгрузить файлы, используй один из способов:\n"
+        "1. Загрузи файл через бота заново — он сохранится в канал\n"
+        "2. Перешли файл из канала в бота — я скачаю его\n"
+        "3. *(скоро)* Будет база данных со всеми file_id",
+        parse_mode="Markdown"
+    )
 
 @dp.message(FileUploadState.waiting_for_file)
 async def process_file(message: types.Message, state: FSMContext):
