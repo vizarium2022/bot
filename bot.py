@@ -3,7 +3,7 @@ import os
 from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -64,27 +64,69 @@ async def check_channels_status():
             await bot.send_message(ADMIN_ID, f"⚠️ КАНАЛ {name} (ID: {cid}) НЕДОСТУПЕН!")
     return status
 
+# ========== КЛАВИАТУРА С КНОПКАМИ ==========
+def get_main_keyboard():
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📁 Получить ссылку на каналы")],
+            [KeyboardButton(text="📊 Статус каналов")],
+            [KeyboardButton(text="📤 Загрузить файл")],
+            [KeyboardButton(text="ℹ️ Помощь")]
+        ],
+        resize_keyboard=True
+    )
+    return keyboard
+
 @dp.message(Command("start"))
 async def start(message: types.Message):
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📁 Получить ссылку на каналы", callback_data="get_channels")],
-        [InlineKeyboardButton(text="📊 Статус каналов", callback_data="status")]
-    ])
     await message.answer(
-        "🤖 SYMBIOTE TRADING БОТ\n\nХраню файлы в 3 каналах.\nЧтобы получить доступ — нажми кнопку.\nСсылка действует 5 минут.",
-        reply_markup=kb
+        "🤖 SYMBIOTE TRADING БОТ\n\n"
+        "Я храню файлы в 3 каналах и выдаю их по паролю.\n\n"
+        "📌 Используй кнопки внизу для управления.\n"
+        "🔐 Пароль для доступа к каналам: 20032009sdr",
+        reply_markup=get_main_keyboard()
     )
 
-@dp.callback_query(lambda c: c.data == "get_channels")
-async def get_channels(callback: types.CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await callback.message.answer("🔐 Введите пароль:")
+# ========== ОБРАБОТКА КНОПОК ==========
+@dp.message(lambda msg: msg.text == "📁 Получить ссылку на каналы")
+async def get_channels_button(message: types.Message, state: FSMContext):
+    await message.answer("🔐 Введите пароль для доступа к каналам:")
     await state.set_state("waiting_password")
 
-@dp.message(lambda msg: msg.text is not None)
+@dp.message(lambda msg: msg.text == "📊 Статус каналов")
+async def status_button(message: types.Message):
+    statuses = await check_channels_status()
+    text = "📊 СТАТУС КАНАЛОВ:\n\n"
+    for name, alive in statuses.items():
+        text += f"Канал {name}: {'✅ ЖИВ' if alive else '❌ НЕТ ДОСТУПА'}\n"
+    await message.answer(text)
+
+@dp.message(lambda msg: msg.text == "📤 Загрузить файл")
+async def upload_button(message: types.Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только администратор может загружать файлы.")
+        return
+    await message.answer("📤 Отправьте файл (любой формат). Я сам разберусь, что это: видео, фото, документ.")
+    await state.set_state(FileUploadState.waiting_for_file)
+
+@dp.message(lambda msg: msg.text == "ℹ️ Помощь")
+async def help_button(message: types.Message):
+    help_text = (
+        "📖 *Помощь по боту*\n\n"
+        "1. Нажми кнопку «Получить ссылку на каналы» и введи пароль: `20032009sdr`\n"
+        "2. Нажми на ссылку — попадёшь в канал с файлами\n"
+        "3. Администратор может загружать файлы через кнопку «Загрузить файл»\n\n"
+        "📌 Ссылки на каналы действуют 5 минут.\n"
+        "📌 Бот автоматически разбивает файлы больше 1.99 ГБ на части."
+    )
+    await message.answer(help_text, parse_mode="Markdown")
+
+# ========== ОБРАБОТКА ПАРОЛЯ ==========
+@dp.message(lambda msg: msg.text and msg.text != "📁 Получить ссылку на каналы" and msg.text != "📊 Статус каналов" and msg.text != "📤 Загрузить файл" and msg.text != "ℹ️ Помощь")
 async def check_password(message: types.Message, state: FSMContext):
     current_state = await state.get_state()
     if current_state != "waiting_password":
+        await message.answer("Используй кнопки меню. Если хочешь получить доступ к каналам — нажми «Получить ссылку на каналы».")
         return
     if message.text == GLOBAL_PASSWORD:
         temp_links[message.from_user.id] = {"expires": datetime.now() + timedelta(minutes=5)}
@@ -104,26 +146,10 @@ async def check_password(message: types.Message, state: FSMContext):
         await message.answer("✅ Доступ разрешён! Ссылки на 5 минут:", reply_markup=kb)
         await state.clear()
     else:
-        await message.answer("❌ Неверный пароль!")
+        await message.answer("❌ Неверный пароль! Попробуй ещё раз.")
         await state.clear()
 
-@dp.callback_query(lambda c: c.data == "status")
-async def show_status(callback: types.CallbackQuery):
-    await callback.answer()
-    statuses = await check_channels_status()
-    text = "📊 СТАТУС КАНАЛОВ:\n\n"
-    for name, alive in statuses.items():
-        text += f"Канал {name}: {'✅ ЖИВ' if alive else '❌ НЕТ ДОСТУПА'}\n"
-    await callback.message.answer(text)
-
-@dp.message(Command("upload"))
-async def upload_start(message: types.Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
-        await message.answer("⛔ Только администратор.")
-        return
-    await message.answer("📤 Отправьте файл (любой формат)")
-    await state.set_state(FileUploadState.waiting_for_file)
-
+# ========== ЗАГРУЗКА ФАЙЛОВ ==========
 @dp.message(FileUploadState.waiting_for_file)
 async def process_file(message: types.Message, state: FSMContext):
     if not is_admin(message.from_user.id):
@@ -131,70 +157,81 @@ async def process_file(message: types.Message, state: FSMContext):
         await state.clear()
         return
 
+    # Определяем тип файла
     if message.document:
         file = message.document
         filename = file.file_name
+        file_type = "document"
     elif message.video:
         file = message.video
         filename = f"video_{file.file_id}.mp4"
+        file_type = "video"
     elif message.photo:
         file = message.photo[-1]
         filename = f"photo_{file.file_id}.jpg"
+        file_type = "photo"
     elif message.audio:
         file = message.audio
         filename = file.file_name or f"audio_{file.file_id}.mp3"
+        file_type = "audio"
     elif message.voice:
         file = message.voice
         filename = f"voice_{file.file_id}.ogg"
+        file_type = "voice"
     else:
-        await message.answer("❌ Неподдерживаемый тип файла")
+        await message.answer("❌ Неподдерживаемый тип файла. Отправь видео, фото, документ, аудио или голосовое.")
         await state.clear()
         return
 
     fname = filename
     fsize = file.file_size
-    await message.answer(f"📦 Получен: {fname}\nРазмер: {fsize/(1024**3):.2f} ГБ")
+    await message.answer(f"📦 Получен: {fname}\nРазмер: {fsize/(1024**3):.2f} ГБ\n⏳ Загружаю в канал...")
 
     path = f"temp_{fname}"
     await bot.download(file, destination=path)
 
-    if fsize > CHUNK_SIZE:
-        await message.answer("✂️ Файл больше 1.99 ГБ. Разбиваю...")
-        parts = split_file(path)
-        await message.answer(f"📦 Разбито на {len(parts)} частей.")
-        for part in parts:
-            ch = get_next_channel()
-            with open(part, 'rb') as f:
-                await bot.send_document(ch, f, caption=f"Часть {os.path.basename(part)}")
-            os.remove(part)
-        os.remove(path)
-        await message.answer("✅ Все части загружены в каналы!")
-    else:
-        ch = get_next_channel()
+    ch = get_next_channel()
+    try:
         with open(path, 'rb') as f:
-            if message.document:
+            if file_type == "document":
                 await bot.send_document(ch, f, caption=fname)
-            elif message.video:
+            elif file_type == "video":
                 await bot.send_video(ch, f, caption=fname)
-            elif message.photo:
+            elif file_type == "photo":
                 await bot.send_photo(ch, f, caption=fname)
-            elif message.audio:
+            elif file_type == "audio":
                 await bot.send_audio(ch, f, caption=fname)
-            elif message.voice:
+            elif file_type == "voice":
                 await bot.send_voice(ch, f, caption=fname)
             else:
                 await bot.send_document(ch, f, caption=fname)
         os.remove(path)
-        await message.answer(f"✅ Файл загружен в канал {ch}")
-
+        await message.answer(f"✅ Файл «{fname}» успешно загружен в канал {ch}!")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при отправке: {e}")
+        if os.path.exists(path):
+            os.remove(path)
     await state.clear()
+
+# ========== СТАРЫЕ КОМАНДЫ (для совместимости) ==========
+@dp.message(Command("upload"))
+async def cmd_upload(message: types.Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только администратор.")
+        return
+    await message.answer("📤 Отправьте файл (любой формат). Я сам разберусь, что это.")
+    await state.set_state(FileUploadState.waiting_for_file)
 
 @dp.message(Command("status"))
 async def cmd_status(message: types.Message):
     if not is_admin(message.from_user.id):
         await message.answer("⛔ Только для админа.")
         return
-    await show_status(message)
+    statuses = await check_channels_status()
+    text = "📊 СТАТУС КАНАЛОВ:\n\n"
+    for name, alive in statuses.items():
+        text += f"Канал {name}: {'✅ ЖИВ' if alive else '❌ НЕТ ДОСТУПА'}\n"
+    await message.answer(text)
 
 # ========== WEB СЕРВЕР ДЛЯ HEALTH-CHECK ==========
 async def health_check(request):
